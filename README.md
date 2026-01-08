@@ -148,6 +148,8 @@ modelscope download --model qwen/Qwen3-VL-Embedding-2B --local_dir ./models/Qwen
 
 #### Embedding Model
 
+##### Transformers usage
+
 ```python
 import torch
 from src.models.qwen3_vl_embedding import Qwen3VLEmbedder
@@ -175,7 +177,55 @@ embeddings = model.process(inputs)
 print(embeddings @ embeddings.T)
 ```
 
+##### vLLM usage
+
+```python
+# Requires vllm>=0.14.0
+from io import BytesIO
+
+import requests
+import torch
+from PIL import Image
+
+from vllm import LLM
+
+
+def get_image_from_url(url) -> Image.Image:
+    response = requests.get(url)
+    img = Image.open(BytesIO(response.content)).convert("RGB")
+    return img
+
+
+model = LLM(model="Qwen/Qwen3-VL-Embedding-2B", runner="pooling", max_model_len=8192)
+
+image = get_image_from_url("https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg")
+image_placeholder = "<|vision_start|><|image_pad|><|vision_end|>"
+inputs = [
+    {
+        "prompt": "A woman playing with her dog on a beach at sunset.",
+    },
+    {
+        "prompt": "A woman shares a joyful moment with her golden retriever on a sun-drenched beach at sunset, as the dog offers its paw in a heartwarming display of companionship and trust."
+    },
+    {
+        "prompt": image_placeholder,
+        "multi_modal_data": {"image": image},
+    },
+    {
+        "prompt": f"{image_placeholder}\nA woman shares a joyful moment with her golden retriever on a sun-drenched beach at sunset, as the dog offers its paw in a heartwarming display of companionship and trust.",
+        "multi_modal_data": {"image": image},
+    },
+]
+
+outputs = model.embed(inputs)
+embeddings = torch.tensor([o.outputs.embedding for o in outputs])
+scores = embeddings[:2] @ embeddings[2:].T
+print(scores.tolist())
+```
+
 #### Reranking Model
+
+##### Transformers usage
 
 ```python
 import torch
@@ -203,6 +253,50 @@ inputs = {
 
 scores = model.process(inputs)
 print(scores)
+```
+
+##### vLLM usage
+
+```python
+# Requires vllm>=0.14.0
+from vllm import LLM
+
+model = LLM(
+    model="Qwen/Qwen3-VL-Reranker-2B",
+    runner="pooling",
+    max_model_len=32768,
+    hf_overrides={
+        "architectures": ["Qwen3VLForSequenceClassification"],
+        "classifier_from_token": ["no", "yes"],
+        "is_original_qwen3_reranker": True,
+    },
+)
+
+query = "A woman playing with her dog on a beach at sunset."
+# Sample multimodal documents to be scored against the query
+# Each document contains an image URL that will be fetched and processed
+documents = {
+    "content": [
+        {
+            "type": "text",
+            "text": "A woman shares a joyful moment with her golden retriever on a sun-drenched beach at sunset, as the dog offers its paw in a heartwarming display of companionship and trust."
+        },
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg"
+            },
+        },
+        {
+            "type": "video_url",
+            "video_url": {
+                "url": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/demo/draw.mp4"
+            },
+        },
+    ]
+}
+outputs = model.score(query, documents)
+print("Relevance scores:", [output.outputs.score for output in outputs])
 ```
 
 ### Model Input Specification
